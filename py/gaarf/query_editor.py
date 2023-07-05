@@ -14,6 +14,7 @@
 
 from typing import Any, Dict, List, Optional, Tuple
 import datetime
+from dateutil.relativedelta import relativedelta
 import dataclasses
 import re
 from .api_clients import BaseClient
@@ -64,6 +65,7 @@ class QueryElements:
 class CommonParametersMixin:
     common_params = {
         "date_iso": datetime.date.today().strftime("%Y%m%d"),
+        "yesterday_iso": (datetime.date.today() - relativedelta(days=1)).strftime("%Y%m%d"),
         "current_date": datetime.date.today().strftime("%Y-%m-%d"),
         "current_datetime":
         datetime.datetime.today().strftime("%Y-%m-%d %H:%M:%S")

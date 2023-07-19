@@ -78,7 +78,7 @@ const argv = (0, yargs_1.default)((0, helpers_1.hideBin)(process.argv))
     .option("account", {
     alias: ["customer", "customer-id", "customer_id"],
     type: "string",
-    description: "Google Ads account id (w/o dashes), a.k.a customer id",
+    description: "Google Ads account id (w/o dashes), a.k.a customer id or multiple accounts separeted with comma",
 })
     .option("customer-ids-query", {
     alias: ["customer_ids_query"],
@@ -99,7 +99,7 @@ const argv = (0, yargs_1.default)((0, helpers_1.hideBin)(process.argv))
     .option("output", {
     choices: ["csv", "bq", "bigquery", "console"],
     alias: "o",
-    description: "output writer to use",
+    description: "Output writer to use",
 })
     .option("loglevel", {
     alias: ["log-level", "ll", "log_level"],
@@ -114,22 +114,29 @@ const argv = (0, yargs_1.default)((0, helpers_1.hideBin)(process.argv))
     // })
     .option("parallel-accounts", {
     type: "boolean",
-    description: "How one query is being processed for multiple accounts: in parallel (true, default) or sequentially (false)",
+    description: "How one query is being processed for multiple accounts: in parallel (true) or sequentially (false). By default - in parallel",
     default: true,
+})
+    .option("parallel-threshold", {
+    type: "number",
+    description: "The maximum number of parallel queries"
 })
     .option("csv.destination-folder", {
     type: "string",
     alias: "csv.destination",
-    description: "output folder for generated CSV files",
+    description: "Output folder for generated CSV files",
 })
     .option("csv.array-separator", {
     type: "string",
-    description: "arrays separator symbol",
+    description: "Arrays separator symbol",
+})
+    .option("csv.file-per-customer", {
+    type: "boolean"
 })
     .option("console.transpose", {
     choices: ["auto", "never", "always"],
     default: "auto",
-    description: "transposing tables: auto - transponse only if table does not fit in terminal window (default), always - transpose all the time, never - never transpose",
+    description: "Transposing tables: auto - transponse only if table does not fit in terminal window (default), always - transpose all the time, never - never transpose",
 })
     .option("console.page_size", {
     type: "number",
@@ -152,19 +159,19 @@ const argv = (0, yargs_1.default)((0, helpers_1.hideBin)(process.argv))
 })
     .option("bq.table-template", {
     type: "string",
-    description: "template for tables names, you can use {script} macro inside",
+    description: "Template for tables names, you can use {script} macro inside",
 })
     .option("bq.dump-schema", {
     type: "boolean",
-    description: "flag that enables dumping json files with schemas for tables",
+    description: "Flag that enables dumping json files with schemas for tables",
 })
     .option("bq.dump-data", {
     type: "boolean",
-    description: "flag that enables dumping json files with tables data",
+    description: "Flag that enables dumping json files with tables data",
 })
     .option("bq.no-union-view", {
     type: "boolean",
-    description: "disable creation of union views (combining data from customer's tables)",
+    description: "Disable creation of union views (combining data from customer's tables)",
 })
     .option("bq.insert-method", {
     type: "string",
@@ -174,17 +181,20 @@ const argv = (0, yargs_1.default)((0, helpers_1.hideBin)(process.argv))
     .option("bq.array-handling", {
     type: "string",
     choices: ["arrays", "strings"],
-    description: "arrays handling (as arrays or as strings)",
+    description: "Arrays handling (as arrays or as strings)",
 })
     .option("bq.array-separator", {
     type: "string",
-    description: "arrays separator symbol (for array-handling=strings)",
+    description: "Arrays separator symbol (for array-handling=strings)",
 })
     .option("skip-constants", {
     type: "boolean",
-    description: "do not execute scripts for constant resources",
+    description: "Do not execute scripts for constant resources",
 })
-    .option("dump-query", { type: "boolean" })
+    .option("dump-query", {
+    type: "boolean",
+    description: "Output GAQL quesries to console before execution",
+})
     .group([
     "bq.project",
     "bq.dataset",
@@ -211,22 +221,22 @@ const argv = (0, yargs_1.default)((0, helpers_1.hideBin)(process.argv))
     .usage(`Google Ads API Report Fetcher (gaarf) - a tool for executing Google Ads queries (aka reports, GAQL) with optional exporting to different targets (e.g. BigQuery, CSV) or dumping to the console.\n Built for Ads API ${ads_query_executor_1.AdsApiVersion}.`)
     .example("$0 queries/**/*.sql --output=bq --bq.project=myproject --bq.dataset=myds", "Execute ads queries and upload results to BigQuery, table per script")
     .example("$0 queries/**/*.sql --output=csv --csv.destination-folder=output", "Execute ads queries and output results to csv files, one per script")
-    .example("$0 queries/**/*.sql --config=gaarf.json", "Execute ads queries with passing arguments via config file (can be json or yaml)")
+    .example("$0 queries/**/*.sql --config=gaarf.json", "Execute ads queries with passing arguments via config file")
     .epilog(`(c) Google 2022-${new Date().getFullYear()}. Not officially supported product.`)
     // TODO: .completion()
     .parseSync();
 function getWriter() {
-    let output = (argv.output || '').toString();
-    if (output === '') {
+    let output = (argv.output || "").toString();
+    if (output === "") {
         return new csv_writer_1.NullWriter();
     }
-    if (output === 'console') {
+    if (output === "console") {
         return new console_writer_1.ConsoleWriter(argv.console);
     }
-    if (output === 'csv') {
+    if (output === "csv") {
         return new csv_writer_1.CsvWriter(argv.csv);
     }
-    if (output === 'bq' || output === 'bigquery') {
+    if (output === "bq" || output === "bigquery") {
         // TODO: move all options to BigQueryWriterOptions
         if (!argv.bq) {
             throw new Error(`For BigQuery writer (---output=bq) we should specify at least a dataset id`);
@@ -243,31 +253,30 @@ function getWriter() {
         let opts = {};
         let bq_opts = argv.bq;
         opts.datasetLocation = bq_opts.location;
-        opts.tableTemplate = bq_opts['table-template'];
-        opts.dumpSchema = bq_opts['dump-schema'];
-        opts.dumpData = bq_opts['dump-data'];
-        opts.noUnionView = bq_opts['no-union-view'];
-        opts.insertMethod = (bq_opts['insert-method'] || '').toLowerCase() === 'insert-all'
-            ? bq_writer_1.BigQueryInsertMethod.insertAll : bq_writer_1.BigQueryInsertMethod.loadTable;
-        opts.arrayHandling = bq_opts['array-handling'];
-        opts.arraySeparator = bq_opts['array-separator'];
-        logger.debug('BigQueryWriterOptions:');
+        opts.tableTemplate = bq_opts["table-template"];
+        opts.dumpSchema = bq_opts["dump-schema"];
+        opts.dumpData = bq_opts["dump-data"];
+        opts.noUnionView = bq_opts["no-union-view"];
+        opts.insertMethod =
+            (bq_opts["insert-method"] || "").toLowerCase() === "insert-all"
+                ? bq_writer_1.BigQueryInsertMethod.insertAll
+                : bq_writer_1.BigQueryInsertMethod.loadTable;
+        opts.arrayHandling = bq_opts["array-handling"];
+        opts.arraySeparator = bq_opts["array-separator"];
+        logger.debug("BigQueryWriterOptions:");
         logger.debug(opts);
         return new bq_writer_1.BigQueryWriter(projectId, dataset, opts);
     }
+    // TODO: if (output === 'sqldb')
     throw new Error(`Unknown output format: '${output}'`);
 }
 async function main() {
-    var _a, _b;
-    if (argv.account) {
-        argv.account = argv.account.toString();
-    }
     logger.verbose(JSON.stringify(argv, null, 2));
     let adsConfig = undefined;
     let adConfigFilePath = argv.adsConfig;
     if (adConfigFilePath) {
         // try to use ads config from extenral file (ads-config arg)
-        adsConfig = await loadAdsConfig(adConfigFilePath, argv.account);
+        adsConfig = await loadAdsConfig(adConfigFilePath);
     }
     // try to use ads config from explicit cli arguments
     if (argv.ads) {
@@ -277,22 +286,34 @@ async function main() {
             client_secret: ads_cfg.client_secret || '',
             developer_token: ads_cfg.developer_token || '',
             refresh_token: ads_cfg.refresh_token || '',
-            login_customer_id: (_a = (ads_cfg.login_customer_id || argv.account || '')) === null || _a === void 0 ? void 0 : _a.toString(),
-            customer_id: (_b = (argv.account || ads_cfg.login_customer_id || '')) === null || _b === void 0 ? void 0 : _b.toString(),
+            login_customer_id: ads_cfg.login_customer_id || '',
         });
     }
     else if (!adConfigFilePath && fs_1.default.existsSync('google-ads.yaml')) {
         // load a default google-ads if it wasn't explicitly specified
         // TODO: support searching google-ads.yaml in user home folder (?)
-        adsConfig = await loadAdsConfig('google-ads.yaml', argv.account);
+        adsConfig = await loadAdsConfig('google-ads.yaml');
     }
     if (!adsConfig) {
         console.log(chalk_1.default.red(`Neither Ads API config file was specified ('ads-config' agrument) nor ads.* arguments (either explicitly or via config files) nor google-ads.yaml found. Exiting`));
         process.exit(-1);
     }
     logger.verbose('Using ads config:');
-    logger.verbose(JSON.stringify(adsConfig, null, 2));
-    let client = new ads_api_client_1.GoogleAdsApiClient(adsConfig, argv.account);
+    logger.verbose(JSON.stringify(Object.assign({}, adsConfig, {
+        refresh_token: "<hidden>",
+        developer_token: "<hidden>",
+    }), null, 2));
+    let customerIds = (0, ads_api_client_1.parseCustomerIds)(argv.account, adsConfig);
+    if (!customerIds || customerIds.length === 0) {
+        console.log(chalk_1.default.red(`No customer id/ids were provided. Exiting`));
+        process.exit(-1);
+    }
+    if (!adsConfig.login_customer_id &&
+        customerIds &&
+        customerIds.length === 1) {
+        adsConfig.login_customer_id = customerIds[0];
+    }
+    let client = new ads_api_client_1.GoogleAdsApiClient(adsConfig);
     let executor = new ads_query_executor_1.AdsQueryExecutor(client);
     // NOTE: a note regarding the 'files' argument
     // normaly on *nix OSes (at least in bash and zsh) passing an argument
@@ -329,15 +350,16 @@ async function main() {
     let customers;
     if (argv.disable_account_expansion) {
         logger.info("Skipping account expansion because of disable_account_expansion flag");
-        customers = [client.root_cid];
+        customers = customerIds;
     }
     else {
-        logger.info(`Fetching customer ids ${customer_ids_query ? '(using custom query)' : ''}`);
-        customers = await client.getCustomerIds();
-        logger.verbose(`Customer ids from the root account ${client.root_cid} (${customers.length}):`);
+        // expand the provided accounts to leaf ones as they could be MMC accounts
+        logger.info(`Expanding customer ids ${customer_ids_query ? '(using custom query)' : ''}`);
+        customers = await client.getCustomerIds(customerIds);
+        logger.verbose(`Customer ids from the root account(s) ${customerIds.join(',')} (${customers.length}):`);
         logger.verbose(customers);
         if (customer_ids_query) {
-            logger.verbose(`Fetching customer ids with custom query`);
+            logger.verbose(`Filtering customer ids with custom query`);
             logger.debug(customer_ids_query);
             try {
                 customers = await executor.getCustomerIds(customers, customer_ids_query);
@@ -359,6 +381,7 @@ async function main() {
     let options = {
         skipConstants: argv.skipConstants,
         parallelAccounts: argv.parallelAccounts,
+        parallelThreshold: argv.parallelThreshold,
         dumpQuery: argv.dumpQuery,
     };
     logger.info(`Found ${scriptPaths.length} script to process`);
@@ -376,9 +399,9 @@ async function main() {
     let elapsed = (0, utils_1.getElapsed)(started);
     logger.info(chalk_1.default.green('All done!') + ' ' + chalk_1.default.gray(`Elapsed: ${elapsed}`));
 }
-async function loadAdsConfig(configFilepath, customerId) {
+async function loadAdsConfig(configFilepath) {
     try {
-        return (0, ads_api_client_1.loadAdsConfigFromFile)(configFilepath, customerId);
+        return (0, ads_api_client_1.loadAdsConfigFromFile)(configFilepath);
     }
     catch (e) {
         console.log(chalk_1.default.red(`Failed to load Ads API configuration from ${configFilepath}: ${e}`));

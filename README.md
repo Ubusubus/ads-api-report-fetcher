@@ -1,4 +1,4 @@
-# Google Ads API Report Fetcher (gaarf)
+Google Ads API Report Fetcher (gaarf)
 
 [![npm](https://img.shields.io/npm/v/google-ads-api-report-fetcher)](https://www.npmjs.com/package/google-ads-api-report-fetcher)
 [![Downloads npm](https://img.shields.io/npm/dw/google-ads-api-report-fetcher?logo=npm)](https://www.npmjs.com/package/google-ads-api-report-fetcher)
@@ -72,7 +72,7 @@ A file path can be not only a local path but also a GCS file.
 Options:
 * `ads-config` - a path to yaml file with config for Google Ads,
                by default assuming 'google-ads.yaml' in the current folder
-* `account` - Ads account id, aka customer id, also can be specified in google-ads.yaml as 'customer-id'
+* `account` - Ads account id, aka customer id, it can contain multiple ids separated with comma, also can be specified in google-ads.yaml as 'customer-id' (as string or list)
 * `input` - input type - where queries are coming from (Python only). Supports the following values:
   * `file` - (default) local or remote (GCS, S3, Azure, etc.) files
   * `console` - data are read from standard output
@@ -85,7 +85,7 @@ Options:
 * `skip-constants` - do not execute scripts for constant resources (e.g. language_constant) (*NodeJS version only*)
 * `dump-query` - outputs query text to console after resolving all macros and expressions (*NodeJS version only*), loglevel should be not less than 'verbose'
 * `customer-ids-query` - GAQL query that specifies for which accounts you need to run `gaarf`. Must contains **customer.id** as the first column in SELECT statement with all the filtering logic going to WHERE statement.
-  `account` argument must be a MCC account id in this case.
+  `account` argument must be a MCC account id (or accounts) in this case.
 
   >Example usage: `gaarf <queries> --account=123456 --customer-ids-query='SELECT customer.id FROM campaign WHERE campaign.advertising_channel_type="SEARCH"'`
 
@@ -93,12 +93,18 @@ Options:
 
   >Example usage: `gaarf <queries> --account=123456 --customer-ids-query-file=/path/to/query.sql
 
-* `disable-account-expansion` - disable MCC account expansion into child accounts (useful when you need to execute a query at MCC level).
+* `disable-account-expansion` - disable MCC account expansion into child accounts (useful when you need to execute a query at MCC level or for speeding up if you provided leaf accounts).
   By default Gaarf does account expansion (even with `customer-ids-query`).
+
+* `parallel-account` - how one query is being processed for multiple accounts: in parallel (true) or sequentially (false). By default - in parallel (*NodeJS version only*, for Python - always sequentially)
+* `parallel-queries` - how to process queries file: all in parallel (true) or sequentially (false). By default - in parallel (*Python version only*, for NodeJS - always sequentially)
+* `parallel-threshold` - a number, maximum number of parallel queries (*NodeJS version only*)
+
 
 Options specific for CSV writer:
 * `csv.destination-folder` - output folder where csv files will be created
 * `csv.array-separator` - a separator symbol for joining arrays as strings, by default '|' (*NodeJS version only*)
+* `csv.file-per-customer` - create a CSV file per customer (default: false) (*NodeJS version only*)
 
 Options specific for BigQuery writer:
 * `bq.project` - GCP project id
@@ -163,8 +169,9 @@ gaarf-sql <files> [options]
 Options:
 * `sql.*` - named SQL parameters to be used in queries as `@param`. E.g. a parameter 'date' supplied via cli as `--sql.date=2022-06-01` can be used in query as `@date` in query.
 * `macro.*` - macro parameters to substitute into queries as `{param}`. E.g. a parameter 'dataset' supplied via cli as `--macro.dataset=myds` can be used as `{dataset}` in query's text.
-* [Python only] `template.*` -  [control structures](https://jinja.palletsprojects.com/en/3.1.x/templates/#list-of-control-structures) supported by Jinja
+* `template.*` -  parameters for templates, strings with "," will be converted to lists/arrays
 
+ 
 The tool assumes that scripts you provide are DDL, i.e. contains statements like create table or create view.
 
 In general it's recommended to separate tables with data from Ads API and final tables/views created by your post-processing queries.
@@ -240,8 +247,15 @@ WHERE name LIKE @name
 
 *Template*
 
-In Python version you can also pass `template` parameter:
+Your SQL scripts can be templates using a template engine: [Jinja](https://jinja.palletsprojects.com) for Python and [Nunjucks](https://mozilla.github.io/nunjucks/) for NodeJS.
+A script will be processed as a template if and only if you supplied `template` argument.
 
+Inside templates you can use appropriate syntax and control structues of a template engine (Jinja/Nunjucks).
+They are mostly compatible but please consult the documentations if you migrate between platforms (Python <-> NodeJS).
+
+Usually inside template blocks you use some variable (in if-else/for-loop). To pass their values you use `--template` arguments.
+
+Example:
 ```
 SELECT
   customer_id AS
@@ -255,9 +269,12 @@ WHERE name LIKE @name
 ```
 and to execute:
 
-`gaarf-bq path/to/query.sql --template.level="0"`
+`gaarf-bq path/to/query.sql --template.level=0`
 
 This will create a column named either `root_account_id` since the specified level is 0.
+
+Please note that all values passed through CLI arguments are strings. But there's a special case - a value containing ","
+then it's treated as an array - see the following example.
 
 Template are great when you need to create multiple column based on condition:
 
@@ -272,7 +289,7 @@ and to execute:
 
 `gaarf-bq path/to/query.sql --template.cohort_days=0,1,3,4,5,10,30`
 
-It will create 7 columns (named `installs_0_day`, `installs_1_day`, etc).
+It will create 7 columns (named `installs_0_day`, `installs_1_day`, etc) because the cohort_days argument was processed as a list.
 
 ATTENTION: passing macros into sql queries is vulnerable to sql-injection so be very careful where you're taking values from.
 
